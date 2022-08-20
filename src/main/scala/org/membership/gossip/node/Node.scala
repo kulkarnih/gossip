@@ -13,8 +13,8 @@ class Node(initAddress: InetSocketAddress,
   val address: InetSocketAddress = initAddress
   private var heartBeatSeqNumber: Long = initSeqNumber
   private val failed: VolatileBooleanRef = new VolatileBooleanRef(false)
-  private var lastUpdateTime: LocalDateTime = null
-  val gossipConfig: GossipConfig = config
+  private var lastUpdateTime: Option[LocalDateTime] = None
+  private var gossipConfig: GossipConfig = config
 
   def getAddress: String = address.getHostName
 
@@ -24,10 +24,14 @@ class Node(initAddress: InetSocketAddress,
 
   def getUniqueId: String = address.toString
 
-  private def setLastUpdatedTime(): Unit = {
-    lastUpdateTime = LocalDateTime.now()
+  def setGossipConfig(config: GossipConfig): Unit = gossipConfig = config
+
+  def setLastUpdatedTime(): Unit = {
+    lastUpdateTime = Some(LocalDateTime.now())
     println("Node " + getUniqueId + " updated at " + lastUpdateTime.toString)
   }
+
+  def getSequenceNumber: Long = heartBeatSeqNumber
 
   def updateSequenceNumber(newSeqNumber: Long):Unit = {
     if(newSeqNumber > heartBeatSeqNumber) {
@@ -47,14 +51,14 @@ class Node(initAddress: InetSocketAddress,
   def hasFailed: Boolean = failed.elem
 
   def checkIfFailed(): Unit = {
-    val failureTime: LocalDateTime = lastUpdateTime.plus(gossipConfig.cleanupTimeout)
+    val failureTime: LocalDateTime = lastUpdateTime.get.plus(gossipConfig.cleanupTimeout)
     failed.elem = LocalDateTime.now().isAfter(failureTime)
   }
 
   def shouldCleanup: Boolean = {
     if(failed.elem) {
       val cleanupTimeout: Duration = gossipConfig.failureTimeout.plus(gossipConfig.cleanupTimeout)
-      val cleanupTime: LocalDateTime = lastUpdateTime.plus(cleanupTimeout)
+      val cleanupTime: LocalDateTime = lastUpdateTime.get.plus(cleanupTimeout)
       LocalDateTime.now().isAfter(cleanupTime)
     } else {
       false
