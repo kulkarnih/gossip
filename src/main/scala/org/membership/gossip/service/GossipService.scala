@@ -1,7 +1,6 @@
 package org.membership.gossip.service
 
 import org.membership.gossip.config.GossipConfig
-import org.membership.gossip.service.GossipUpdater
 import org.membership.gossip.node.Node
 
 import java.net.InetSocketAddress
@@ -21,18 +20,14 @@ class GossipService (socketAddress: InetSocketAddress, config: GossipConfig){
   nodes.putIfAbsent(self.getUniqueId, self)
 
   private var stopped: Boolean = false
-  var onNewMember: GossipUpdater = null
-  var onFailedMember: GossipUpdater = null
-  var onRemovedMember: GossipUpdater = null
-  var onRevivedMember: GossipUpdater = null
+  var onNewMember: Option[GossipUpdater] = None
+  var onFailedMember: Option[GossipUpdater] = None
+  var onRemovedMember: Option[GossipUpdater] = None
+  var onRevivedMember: Option[GossipUpdater] = None
 
   def setInitialTarget(targetAddress: InetSocketAddress): Node = {
     val initialTarget: Node = new Node(targetAddress, 0, gossipConfig)
     nodes.putIfAbsent(initialTarget.getUniqueId, initialTarget).get
-  }
-
-  private def getRandomIndex(size: Int): Int = {
-    (Math.random() * size).toInt
   }
 
   def start(): Unit = {
@@ -41,6 +36,8 @@ class GossipService (socketAddress: InetSocketAddress, config: GossipConfig){
     startFailureDetectionThread()
     printNodes()
   }
+
+  def stop(): Unit = stopped = true
 
   private def sendGossipToRandomNode(): Unit = {
     self.incrementSequenceNumber()
@@ -66,7 +63,67 @@ class GossipService (socketAddress: InetSocketAddress, config: GossipConfig){
     }).start()
   }
 
-  def getLiveMembers: List[InetSocketAddress] = {
+  private def receivePeerMessage(): Unit = {
+    val newNode: Node = socketService.receiveGossip()
+    val existingNode: Option[Node] = nodes.get(newNode.getUniqueId)
+
+    if(existingNode.isEmpty) {
+      this.synchronized {
+        newNode.setGossipConfig(gossipConfig)
+        newNode.setLastUpdatedTime()
+        nodes.putIfAbsent(newNode.getUniqueId, newNode)
+        if(onNewMember.isDefined) onNewMember.get.update(newNode.address)
+      }
+    } else {
+      println("Updating sequence number for node " + existingNode.get.getUniqueId)
+      existingNode.get.updateSequenceNumber(newNode.getSequenceNumber)
+    }
+  }
+
+  private def startReceiverThread(): Unit = {
+    new Thread(() => {
+      while(!stopped) {
+        receivePeerMessage()
+      }
+    }).start()
+  }
+
+  private def detectFailedNodes(): Unit = {
+    nodes.keys.foreach(key => {
+      val node: Node = nodes(key)
+      val hadFailed: Boolean = node.hasFailed
+      node.checkIfFailed()
+
+      if(hadFailed != node.hasFailed) {
+        if(node.hasFailed) {
+          if(onFailedMember.isDefined) onFailedMember.get.update(node.address)
+          else if(onRevivedMember.isDefined) onRevivedMember.get.update(node.address)
+        }
+      }
+
+      if(node.shouldCleanup) {
+        nodes.synchronized {
+          nodes.remove(key)
+          if(onRemovedMember.isDefined) onRemovedMember.get.update(node.address)
+        }
+      }
+    })
+  }
+
+  private def startFailureDetectionThread(): Unit = {
+    new Thread(() => {
+      while(!stopped) {
+        detectFailedNodes()
+        try {
+          Thread.sleep(gossipConfig.failureDetectionFreq.toMillis)
+        } catch {
+          case e: InterruptedException => e.printStackTrace()
+        }
+      }
+    }).start()
+  }
+
+  private def getLiveMembers: List[InetSocketAddress] = {
     nodes.foldRight(List.empty: List[InetSocketAddress])((entry: (String, Node), acc: List[InetSocketAddress]) => {
       val node: Node = entry._2
       node.checkIfFailed()
@@ -78,7 +135,7 @@ class GossipService (socketAddress: InetSocketAddress, config: GossipConfig){
     })
   }
 
-  def getFailedMembers: List[InetSocketAddress] = {
+  private def getFailedMembers: List[InetSocketAddress] = {
 
     nodes.foldRight(List.empty: List[InetSocketAddress])((entry: (String, Node), acc: List[InetSocketAddress]) => {
       val node: Node = entry._2
@@ -92,7 +149,7 @@ class GossipService (socketAddress: InetSocketAddress, config: GossipConfig){
 
   }
 
-  def getAllMembers: List[InetSocketAddress] =
+  private def getAllMembers: List[InetSocketAddress] =
     nodes.toList.map(entry => {
       val node: Node = entry._2
       new InetSocketAddress(node.getAddress, node.getPort)

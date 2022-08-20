@@ -2,8 +2,11 @@ package org.membership.gossip.service
 
 import org.membership.gossip.node.Node
 
-import java.io.{ByteArrayOutputStream, ObjectOutput, ObjectOutputStream}
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream, ObjectOutput, ObjectOutputStream }
 import java.net.{DatagramPacket, DatagramSocket, SocketException}
+
+import java.io.IOException
+import java.io.ObjectInputStream
 
 class SocketService(portToListen: Int) {
 
@@ -23,10 +26,6 @@ class SocketService(portToListen: Int) {
     val bytesToWrite: Array[Byte] = getBytesToWrite(message)
     sendGossipMessage(node, bytesToWrite)
   }
-
-  import java.io.ByteArrayInputStream
-  import java.io.IOException
-  import java.io.ObjectInputStream
 
   def receiveGossip(): Node = {
     try {
