@@ -8,6 +8,7 @@ import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentHashMap
 import scala.collection._
 import scala.jdk.CollectionConverters.ConcurrentMapHasAsScala
+import scala.util.Random
 
 class GossipService (socketAddress: InetSocketAddress, config: GossipConfig){
 
@@ -39,6 +40,17 @@ class GossipService (socketAddress: InetSocketAddress, config: GossipConfig){
     startReceiverThread()
     startFailureDetectionThread()
     printNodes()
+  }
+
+  private def sendGossipToRandomNode(): Unit = {
+    self.incrementSequenceNumber()
+    val nodesForSampling: List[String] = nodes.keys.filter(x => x != self.getUniqueId).toList
+    val nodesToSendGossip: List[String] = Random.shuffle(nodesForSampling).take(gossipConfig.peersToUpdatePerInterval)
+
+    for(targetAddress: String <- nodesToSendGossip) {
+      val node: Node = nodes(targetAddress)
+      new Thread(() => socketService.sendGossip(node, self)).start()
+    }
   }
 
   private def startSenderThread(): Unit = {
